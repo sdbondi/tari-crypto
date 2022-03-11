@@ -39,7 +39,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Add, Mul, Sub},
 };
-use tari_utilities::{hex::Hex, ByteArray, ByteArrayError, ExtendBytes, Hashable};
+use tari_utilities::{hex::Hex, ByteArray, ByteArrayError, Hashable};
 use zeroize::Zeroize;
 
 /// The [SecretKey](trait.SecretKey.html) implementation for [Ristretto](https://ristretto.group) is a thin wrapper
@@ -262,14 +262,6 @@ impl DiffieHellmanSharedSecret for RistrettoPublicKey {
 impl Hashable for RistrettoPublicKey {
     fn hash(&self) -> Vec<u8> {
         Blake2b::digest(self.as_bytes()).to_vec()
-    }
-}
-
-// Requires custom Extendbytes implementation for RistrettoPublicKey as CompressedRistretto doesnt implement this trait
-impl ExtendBytes for RistrettoPublicKey {
-    fn append_raw_bytes(&self, buf: &mut Vec<u8>) {
-        let bytes = self.as_bytes();
-        buf.extend_from_slice(bytes);
     }
 }
 
