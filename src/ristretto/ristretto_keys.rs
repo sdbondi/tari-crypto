@@ -17,7 +17,7 @@ use curve25519_dalek::{
     constants::RISTRETTO_BASEPOINT_TABLE,
     ristretto::{CompressedRistretto, RistrettoPoint},
     scalar::Scalar,
-    traits::MultiscalarMul,
+    traits::{MultiscalarMul, VartimeMultiscalarMul},
 };
 use digest::{Digest, consts::U64};
 use rand_core::{CryptoRng, Rng};
@@ -401,6 +401,13 @@ impl PublicKey for RistrettoPublicKey {
         let p = points.iter().map(|p| &p.point);
         let s = scalars.iter().map(|k| &k.0);
         let p = RistrettoPoint::multiscalar_mul(s, p);
+        RistrettoPublicKey::new_from_pk(p)
+    }
+
+    fn vartime_batch_mul(scalars: &[Self::K], points: &[Self]) -> Self {
+        let p = points.iter().map(|p| &p.point);
+        let s = scalars.iter().map(|k| &k.0);
+        let p = RistrettoPoint::vartime_multiscalar_mul(s, p);
         RistrettoPublicKey::new_from_pk(p)
     }
 }

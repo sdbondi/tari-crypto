@@ -3,7 +3,7 @@
 #![allow(missing_docs)]
 use std::time::Duration;
 
-use criterion::{BatchSize, Criterion, criterion_group};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group};
 use rand::{Rng, rng};
 use tari_crypto::{
     keys::{PublicKey, SecretKey},
@@ -68,8 +68,66 @@ fn verify_message(c: &mut Criterion) {
     });
 }
 
+/// Signs `n` distinct messages under `n` fresh keys.
+fn signed_batch(n: usize) -> Vec<(RistrettoSchnorr, RistrettoPublicKey, [u8; 32])> {
+    let mut rng = rng();
+    (0..n)
+        .map(|_| {
+            let d = gen_keypair();
+            let s = RistrettoSchnorr::sign(&d.k, d.m, &mut rng).unwrap();
+            (s, d.p, d.m)
+        })
+        .collect()
+}
+
+/// Per-signature verification against batch verification over the same set.
+///
+/// `n = 1` and `n = 2` matter as much as the large sizes: most Ootle transactions carry a single seal plus a
+/// single authorization, so the batch must not lose there.
+fn verify_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Batch verify RistrettoSchnorr");
+    for n in [1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
+        group.throughput(Throughput::Elements(n as u64));
+
+        group.bench_with_input(BenchmarkId::new("individually", n), &n, |b, &n| {
+            b.iter_batched(
+                || signed_batch(n),
+                |batch| {
+                    for (s, p, m) in &batch {
+                        assert!(s.verify(p, m));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_with_input(BenchmarkId::new("deterministic weights", n), &n, |b, &n| {
+            b.iter_batched(
+                || signed_batch(n),
+                |batch| {
+                    let items: Vec<_> = batch.iter().map(|(s, p, m)| (s, p, m.as_slice())).collect();
+                    assert!(RistrettoSchnorr::verify_batch(&items));
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_with_input(BenchmarkId::new("random weights", n), &n, |b, &n| {
+            b.iter_batched(
+                || signed_batch(n),
+                |batch| {
+                    let items: Vec<_> = batch.iter().map(|(s, p, m)| (s, p, m.as_slice())).collect();
+                    assert!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng()));
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
 name = signatures;
 config = Criterion::default().warm_up_time(Duration::from_millis(500));
-targets = generate_secret_key, native_keypair, sign_message, verify_message
+targets = generate_secret_key, native_keypair, sign_message, verify_message, verify_batch
 );

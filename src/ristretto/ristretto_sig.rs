@@ -267,6 +267,271 @@ mod test {
         assert!(!sig.verify(&(&P + &P), "Queues are things that happen to other people"));
     }
 
+    /// Vartime batch verification.
+    mod batch {
+        use alloc::{vec, vec::Vec};
+
+        use rand::rng;
+
+        use super::*;
+
+        struct Signed {
+            public_key: RistrettoPublicKey,
+            signature: RistrettoSchnorr,
+            message: Vec<u8>,
+        }
+
+        /// Signs `n` distinct messages under `n` fresh keys.
+        fn sign_n(n: usize) -> Vec<Signed> {
+            let mut rng = rng();
+            (0..n)
+                .map(|i| {
+                    let (k, public_key) = RistrettoPublicKey::random_keypair(&mut rng);
+                    let message = format!("message {i}").into_bytes();
+                    let signature = RistrettoSchnorr::sign(&k, &message, &mut rng).unwrap();
+                    Signed {
+                        public_key,
+                        signature,
+                        message,
+                    }
+                })
+                .collect()
+        }
+
+        fn items(signed: &[Signed]) -> Vec<(&RistrettoSchnorr, &RistrettoPublicKey, &[u8])> {
+            signed
+                .iter()
+                .map(|s| (&s.signature, &s.public_key, s.message.as_slice()))
+                .collect()
+        }
+
+        /// Asserts that both batch verifiers agree with the per-signature verifier on this set.
+        fn assert_agrees(signed: &[Signed]) -> bool {
+            let expected = signed.iter().all(|s| s.signature.verify(&s.public_key, &s.message));
+            let items = items(signed);
+            assert_eq!(RistrettoSchnorr::verify_batch(&items), expected);
+            assert_eq!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng()), expected);
+            expected
+        }
+
+        /// Asserts that the set is accepted, by the batch verifiers and by the per-signature verifier alike.
+        fn assert_accepts(signed: &[Signed]) {
+            assert!(assert_agrees(signed));
+        }
+
+        /// Asserts that the set is rejected, and that the per-signature verifier rejects it too, so that a passing
+        /// negative test can never be one that both verifiers happen to accept.
+        fn assert_rejects(signed: &[Signed]) {
+            assert!(!assert_agrees(signed));
+        }
+
+        #[test]
+        fn empty_batch_is_vacuously_valid() {
+            let items: Vec<(&RistrettoSchnorr, &RistrettoPublicKey, &[u8])> = vec![];
+            assert!(RistrettoSchnorr::verify_batch(&items));
+            assert!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng()));
+        }
+
+        /// The batch verdict must match the per-signature verdict, with a foreign signature planted at every
+        /// position for small batches and at the ends and middle for large ones.
+        #[test]
+        fn agrees_with_per_signature_verify() {
+            for n in [1usize, 2, 3, 4, 8, 33] {
+                let mut signed = sign_n(n);
+                assert_accepts(&signed);
+
+                let positions: Vec<usize> = if n <= 8 {
+                    (0..n).collect()
+                } else {
+                    vec![0, n / 2, n - 1]
+                };
+                let foreign = sign_n(1).pop().unwrap();
+                for position in positions {
+                    let original = core::mem::replace(&mut signed[position].signature, foreign.signature.clone());
+                    assert!(
+                        !RistrettoSchnorr::verify_batch(&items(&signed)),
+                        "n = {n}, i = {position}"
+                    );
+                    assert_rejects(&signed);
+                    signed[position].signature = original;
+                }
+
+                assert_accepts(&signed);
+            }
+        }
+
+        /// Two signatures whose defects are `+δG` and `−δG` cancel exactly when summed unweighted. This is the
+        /// attack the weights exist to stop.
+        #[test]
+        fn rejects_cancelling_errors() {
+            let mut rng = rng();
+            let mut signed = sign_n(2);
+            let delta = RistrettoSecretKey::random(&mut rng);
+
+            signed[0].signature = RistrettoSchnorr::new(
+                signed[0].signature.get_public_nonce().clone(),
+                signed[0].signature.get_signature() + &delta,
+            );
+            signed[1].signature = RistrettoSchnorr::new(
+                signed[1].signature.get_public_nonce().clone(),
+                signed[1].signature.get_signature() - &delta,
+            );
+
+            // Neither signature verifies on its own, and the unweighted sum of their defects is zero
+            assert!(!signed[0].signature.verify(&signed[0].public_key, &signed[0].message));
+            assert!(!signed[1].signature.verify(&signed[1].public_key, &signed[1].message));
+            assert_rejects(&signed);
+        }
+
+        /// Swapping any component between two terms must be caught.
+        #[test]
+        fn rejects_permuted_components() {
+            // Public keys
+            let mut signed = sign_n(2);
+            let (first, rest) = signed.split_at_mut(1);
+            core::mem::swap(&mut first[0].public_key, &mut rest[0].public_key);
+            assert_rejects(&signed);
+
+            // Public nonces
+            let mut signed = sign_n(2);
+            let swapped = (
+                RistrettoSchnorr::new(
+                    signed[1].signature.get_public_nonce().clone(),
+                    signed[0].signature.get_signature().clone(),
+                ),
+                RistrettoSchnorr::new(
+                    signed[0].signature.get_public_nonce().clone(),
+                    signed[1].signature.get_signature().clone(),
+                ),
+            );
+            signed[0].signature = swapped.0;
+            signed[1].signature = swapped.1;
+            assert_rejects(&signed);
+
+            // Signature scalars
+            let mut signed = sign_n(2);
+            let swapped = (
+                RistrettoSchnorr::new(
+                    signed[0].signature.get_public_nonce().clone(),
+                    signed[1].signature.get_signature().clone(),
+                ),
+                RistrettoSchnorr::new(
+                    signed[1].signature.get_public_nonce().clone(),
+                    signed[0].signature.get_signature().clone(),
+                ),
+            );
+            signed[0].signature = swapped.0;
+            signed[1].signature = swapped.1;
+            assert_rejects(&signed);
+        }
+
+        /// Under `P = 0` the batch equation degenerates to `s·G == R`, which anyone can satisfy, so the identity key
+        /// has to be rejected up front.
+        #[test]
+        fn rejects_identity_public_key() {
+            let mut rng = rng();
+            let zero = RistrettoSecretKey::default();
+            let identity = RistrettoPublicKey::from_secret_key(&zero);
+            assert_eq!(identity, RistrettoPublicKey::default());
+
+            let message = b"A secret message".to_vec();
+            let signature = RistrettoSchnorr::sign(&zero, &message, &mut rng).unwrap();
+            let forged = Signed {
+                public_key: identity,
+                signature,
+                message,
+            };
+
+            // Alone
+            assert_rejects(core::slice::from_ref(&forged));
+
+            // And next to a valid signature, at either end
+            let mut signed = sign_n(1);
+            signed.push(forged);
+            assert_rejects(&signed);
+            signed.swap(0, 1);
+            assert_rejects(&signed);
+        }
+
+        /// Ootle batches a seal, which signs a different message, together with the transaction authorizations.
+        #[test]
+        fn mixed_messages_in_one_batch() {
+            let mut rng = rng();
+            let (k, public_key) = RistrettoPublicKey::random_keypair(&mut rng);
+            let seal = b"seal".to_vec();
+            let authorization = b"authorization".to_vec();
+
+            let signed = vec![
+                Signed {
+                    public_key: public_key.clone(),
+                    signature: RistrettoSchnorr::sign(&k, &seal, &mut rng).unwrap(),
+                    message: seal.clone(),
+                },
+                Signed {
+                    public_key: public_key.clone(),
+                    signature: RistrettoSchnorr::sign(&k, &authorization, &mut rng).unwrap(),
+                    message: authorization,
+                },
+            ];
+            assert_accepts(&signed);
+
+            // The same signature under the wrong message of the pair must not slip through
+            let swapped = vec![
+                Signed {
+                    public_key: public_key.clone(),
+                    signature: signed[1].signature.clone(),
+                    message: seal,
+                },
+                Signed {
+                    public_key,
+                    signature: signed[0].signature.clone(),
+                    message: b"authorization".to_vec(),
+                },
+            ];
+            assert_rejects(&swapped);
+        }
+
+        /// The exposed challenge scalar must be the one `verify` uses.
+        #[test]
+        fn challenge_scalar_matches_verify() {
+            let mut rng = rng();
+            let (k, public_key) = RistrettoPublicKey::random_keypair(&mut rng);
+            let message = b"Thief of Time";
+            let signature = RistrettoSchnorr::sign(&k, message, &mut rng).unwrap();
+
+            let e = signature.challenge_scalar(&public_key, message).unwrap();
+            assert!(signature.verify_challenge_scalar(&public_key, &e));
+
+            let other = signature.challenge_scalar(&public_key, b"Night Watch").unwrap();
+            assert_ne!(e, other);
+            assert!(!signature.verify_challenge_scalar(&public_key, &other));
+        }
+
+        /// A domain separated signature type must batch under its own domain.
+        #[test]
+        fn custom_domain() {
+            hash_domain!(BatchDomain, "com.tari.test.batch", 1);
+            type Sig = RistrettoSchnorrWithDomain<BatchDomain>;
+
+            let mut rng = rng();
+            let (k, public_key) = RistrettoPublicKey::random_keypair(&mut rng);
+            let message = b"Going Postal";
+            let signature = Sig::sign(&k, message, &mut rng).unwrap();
+
+            let items = vec![(&signature, &public_key, message.as_slice())];
+            assert!(Sig::verify_batch(&items));
+            assert!(Sig::verify_batch_with_rng(&items, &mut rng));
+
+            // A signature over this message under the default domain must not verify here
+            let default_domain = RistrettoSchnorr::sign(&k, message, &mut rng).unwrap();
+            let crossed = Sig::new(
+                default_domain.get_public_nonce().clone(),
+                default_domain.get_signature().clone(),
+            );
+            assert!(!Sig::verify_batch(&[(&crossed, &public_key, message.as_slice())]));
+        }
+    }
+
     #[test]
     fn zero_public_key() {
         let mut rng = rand::rng();

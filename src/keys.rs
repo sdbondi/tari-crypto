@@ -77,6 +77,18 @@ pub trait PublicKey:
     /// the results to produce a single public key
     fn batch_mul(scalars: &[Self::K], points: &[Self]) -> Self;
 
+    /// A variable-time version of [`PublicKey::batch_mul`].
+    ///
+    /// The running time of this function may depend on the scalars, so it must only be used when every scalar and
+    /// point is public data. It must never be given a secret key.
+    ///
+    /// The default implementation simply defers to the constant-time [`PublicKey::batch_mul`], which is always
+    /// correct but forfeits the speed-up; implementations should override it with a genuine variable-time
+    /// multiscalar multiplication where one is available.
+    fn vartime_batch_mul(scalars: &[Self::K], points: &[Self]) -> Self {
+        Self::batch_mul(scalars, points)
+    }
+
     /// Generate a random public and secret key
     fn random_keypair<R: Rng + CryptoRng>(rng: &mut R) -> (Self::K, Self) {
         let k = Self::K::random(rng);
