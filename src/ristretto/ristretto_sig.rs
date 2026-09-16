@@ -779,6 +779,59 @@ mod test {
             assert_ne!(weights(&reversed), baseline);
         }
 
+        /// A zero/identity signature `(R = 0, s = 0)` must not pass.
+        ///
+        /// Such a term contributes only `(zᵢ·eᵢ)·Pᵢ` to the batch equation — its nonce and scalar drop out — so it
+        /// would slip through if that remaining term could also vanish. It cannot, because `Pᵢ = 0` is rejected up
+        /// front and `eᵢ = 0` would need a hash preimage. Checked here directly rather than argued.
+        #[test]
+        fn rejects_zero_signature() {
+            let mut rng = rng();
+            let (_, public_key) = RistrettoPublicKey::random_keypair(&mut rng);
+
+            let zero = RistrettoSchnorr::default();
+            assert_eq!(zero.get_public_nonce(), &RistrettoPublicKey::default());
+            assert_eq!(zero.get_signature(), &RistrettoSecretKey::default());
+
+            let zero_signed = Signed {
+                public_key: public_key.clone(),
+                signature: zero.clone(),
+                message: b"zero".to_vec(),
+            };
+            assert_rejects(core::slice::from_ref(&zero_signed), "zero signature alone");
+
+            // Alongside a valid signature, at either end
+            let mut signed = sign_n(1);
+            signed.push(zero_signed);
+            assert_rejects(&signed, "zero signature last");
+            signed.swap(0, 1);
+            assert_rejects(&signed, "zero signature first");
+
+            // Fully degenerate: zero signature under the identity key
+            let both = Signed {
+                public_key: RistrettoPublicKey::default(),
+                signature: zero,
+                message: b"zero".to_vec(),
+            };
+            assert_rejects(core::slice::from_ref(&both), "zero signature under identity key");
+
+            // A zero scalar with a real nonce, and a real scalar with an identity nonce
+            let (_, nonce) = RistrettoPublicKey::random_keypair(&mut rng);
+            let zero_scalar = Signed {
+                public_key: public_key.clone(),
+                signature: RistrettoSchnorr::new(nonce, RistrettoSecretKey::default()),
+                message: b"zero".to_vec(),
+            };
+            assert_rejects(core::slice::from_ref(&zero_scalar), "zero scalar, real nonce");
+
+            let zero_nonce = Signed {
+                public_key,
+                signature: RistrettoSchnorr::new(RistrettoPublicKey::default(), RistrettoSecretKey::random(&mut rng)),
+                message: b"zero".to_vec(),
+            };
+            assert_rejects(core::slice::from_ref(&zero_nonce), "real scalar, identity nonce");
+        }
+
         /// A domain separated signature type must batch under its own domain.
         #[test]
         fn custom_domain() {
