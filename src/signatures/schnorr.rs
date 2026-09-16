@@ -193,9 +193,10 @@ where
         for<'b> &'b P: Add<P, Output = P>,
         B: AsRef<[u8]>,
     {
-        let challenge =
-            Self::construct_domain_separated_challenge::<_, Blake2b<U64>>(&self.public_nonce, public_key, message);
-        self.verify_raw_uniform(public_key, challenge.as_ref())
+        let Ok(e) = self.challenge_scalar(public_key, message) else {
+            return false;
+        };
+        self.verify_challenge_scalar(public_key, &e)
     }
 
     /// Verifies a signature against a given public key and challenge byte slice.

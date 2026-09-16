@@ -153,8 +153,11 @@ impl<H: DomainSeparation> SchnorrSignature<RistrettoPublicKey, RistrettoSecretKe
     /// weights derived deterministically from the batch itself.
     ///
     /// Each item is a `(signature, public key, message)` triple, and the result is `true` if and only if every
-    /// signature in the batch would individually verify under [`SchnorrSignature::verify`]. An empty batch
-    /// verifies vacuously.
+    /// signature in the batch would individually verify under [`SchnorrSignature::verify`].
+    ///
+    /// An empty batch returns `true`, following the same convention as [`Iterator::all`]. Note that this fails
+    /// open: if reaching this function with nothing to verify would be a bug in the caller, the non-empty check
+    /// belongs at that call site, because there is nothing here to distinguish "all valid" from "none supplied".
     ///
     /// Given `eᵢ = H(Rᵢ, Pᵢ, mᵢ)` and weights `zᵢ`, this checks the single equation
     ///
@@ -187,6 +190,10 @@ impl<H: DomainSeparation> SchnorrSignature<RistrettoPublicKey, RistrettoSecretKe
         if items.is_empty() {
             return true;
         }
+        // The weights commit to the whole batch, so the transcript necessarily runs before the per-term identity
+        // check in `verify_batch_with_weights`. A batch of identity keys therefore pays one Blake2b pass before it
+        // is rejected; that ordering is forced by the construction, and is negligible beside the multiscalar
+        // multiplication the rejection avoids.
         let weights = Self::deterministic_batch_weights(items);
         Self::verify_batch_with_weights(items, &weights)
     }

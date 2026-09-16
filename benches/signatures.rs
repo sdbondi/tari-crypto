@@ -108,8 +108,11 @@ fn verify_batch(c: &mut Criterion) {
             b.iter(|| assert!(RistrettoSchnorr::verify_batch(&items)));
         });
 
+        // Hoisted out of the timed closure: the deterministic arm has no per-iteration RNG construction, and at
+        // small n this comparison turns on tens of microseconds, so the arms must not differ in setup cost.
+        let mut rng = rng();
         group.bench_with_input(BenchmarkId::new("random weights", n), &n, |b, _| {
-            b.iter(|| assert!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng())));
+            b.iter(|| assert!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng)));
         });
     }
     group.finish();
