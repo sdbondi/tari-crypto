@@ -305,24 +305,29 @@ mod test {
                 .collect()
         }
 
-        /// Asserts that both batch verifiers agree with the per-signature verifier on this set.
-        fn assert_agrees(signed: &[Signed]) -> bool {
+        /// Asserts that both batch verifiers agree with the per-signature verifier on this set, and reports which
+        /// verdict they reached.
+        fn assert_agrees(signed: &[Signed], case: &str) -> bool {
             let expected = signed.iter().all(|s| s.signature.verify(&s.public_key, &s.message));
             let items = items(signed);
-            assert_eq!(RistrettoSchnorr::verify_batch(&items), expected);
-            assert_eq!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng()), expected);
+            assert_eq!(RistrettoSchnorr::verify_batch(&items), expected, "{case}");
+            assert_eq!(
+                RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng()),
+                expected,
+                "{case}"
+            );
             expected
         }
 
         /// Asserts that the set is accepted, by the batch verifiers and by the per-signature verifier alike.
-        fn assert_accepts(signed: &[Signed]) {
-            assert!(assert_agrees(signed));
+        fn assert_accepts(signed: &[Signed], case: &str) {
+            assert!(assert_agrees(signed, case), "{case}");
         }
 
         /// Asserts that the set is rejected, and that the per-signature verifier rejects it too, so that a passing
         /// negative test can never be one that both verifiers happen to accept.
-        fn assert_rejects(signed: &[Signed]) {
-            assert!(!assert_agrees(signed));
+        fn assert_rejects(signed: &[Signed], case: &str) {
+            assert!(!assert_agrees(signed, case), "{case}");
         }
 
         #[test]
@@ -338,7 +343,7 @@ mod test {
         fn agrees_with_per_signature_verify() {
             for n in [1usize, 2, 3, 4, 8, 33] {
                 let mut signed = sign_n(n);
-                assert_accepts(&signed);
+                assert_accepts(&signed, &format!("n = {n}, untouched"));
 
                 let positions: Vec<usize> = if n <= 8 {
                     (0..n).collect()
@@ -348,15 +353,11 @@ mod test {
                 let foreign = sign_n(1).pop().unwrap();
                 for position in positions {
                     let original = core::mem::replace(&mut signed[position].signature, foreign.signature.clone());
-                    assert!(
-                        !RistrettoSchnorr::verify_batch(&items(&signed)),
-                        "n = {n}, i = {position}"
-                    );
-                    assert_rejects(&signed);
+                    assert_rejects(&signed, &format!("n = {n}, foreign signature at {position}"));
                     signed[position].signature = original;
                 }
 
-                assert_accepts(&signed);
+                assert_accepts(&signed, &format!("n = {n}, restored"));
             }
         }
 
@@ -380,7 +381,7 @@ mod test {
             // Neither signature verifies on its own, and the unweighted sum of their defects is zero
             assert!(!signed[0].signature.verify(&signed[0].public_key, &signed[0].message));
             assert!(!signed[1].signature.verify(&signed[1].public_key, &signed[1].message));
-            assert_rejects(&signed);
+            assert_rejects(&signed, "cancelling +δG / -δG pair");
         }
 
         /// Swapping any component between two terms must be caught.
@@ -390,7 +391,7 @@ mod test {
             let mut signed = sign_n(2);
             let (first, rest) = signed.split_at_mut(1);
             core::mem::swap(&mut first[0].public_key, &mut rest[0].public_key);
-            assert_rejects(&signed);
+            assert_rejects(&signed, "public keys swapped");
 
             // Public nonces
             let mut signed = sign_n(2);
@@ -406,7 +407,7 @@ mod test {
             );
             signed[0].signature = swapped.0;
             signed[1].signature = swapped.1;
-            assert_rejects(&signed);
+            assert_rejects(&signed, "public nonces swapped");
 
             // Signature scalars
             let mut signed = sign_n(2);
@@ -422,7 +423,7 @@ mod test {
             );
             signed[0].signature = swapped.0;
             signed[1].signature = swapped.1;
-            assert_rejects(&signed);
+            assert_rejects(&signed, "signature scalars swapped");
         }
 
         /// Under `P = 0` the batch equation degenerates to `s·G == R`, which anyone can satisfy, so the identity key
@@ -443,14 +444,14 @@ mod test {
             };
 
             // Alone
-            assert_rejects(core::slice::from_ref(&forged));
+            assert_rejects(core::slice::from_ref(&forged), "identity public key alone");
 
             // And next to a valid signature, at either end
             let mut signed = sign_n(1);
             signed.push(forged);
-            assert_rejects(&signed);
+            assert_rejects(&signed, "identity public key last");
             signed.swap(0, 1);
-            assert_rejects(&signed);
+            assert_rejects(&signed, "identity public key first");
         }
 
         /// Ootle batches a seal, which signs a different message, together with the transaction authorizations.
@@ -473,7 +474,7 @@ mod test {
                     message: authorization,
                 },
             ];
-            assert_accepts(&signed);
+            assert_accepts(&signed, "seal and authorization");
 
             // The same signature under the wrong message of the pair must not slip through
             let swapped = vec![
@@ -488,7 +489,7 @@ mod test {
                     message: b"authorization".to_vec(),
                 },
             ];
-            assert_rejects(&swapped);
+            assert_rejects(&swapped, "messages swapped between signatures");
         }
 
         /// The exposed challenge scalar must be the one `verify` uses.

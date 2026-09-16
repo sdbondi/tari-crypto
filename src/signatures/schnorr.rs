@@ -574,6 +574,7 @@ mod test {
         assert_eq!(weight.as_bytes(), &expected);
     }
 
+    #[derive(Clone)]
     struct Signed {
         public_key: RistrettoPublicKey,
         signature: RistrettoSchnorr,
@@ -630,14 +631,7 @@ mod test {
         let baseline = weights(&signed);
 
         // A different message
-        let mut altered: Vec<Signed> = signed
-            .iter()
-            .map(|s| Signed {
-                public_key: s.public_key.clone(),
-                signature: s.signature.clone(),
-                message: s.message.clone(),
-            })
-            .collect();
+        let mut altered = signed.clone();
         altered[1].message = b"something else".to_vec();
         assert_ne!(weights(&altered), baseline);
 
@@ -668,15 +662,8 @@ mod test {
         assert_ne!(weights(&altered), baseline[..2]);
 
         // And the order of the batch
-        let reversed: Vec<Signed> = signed
-            .iter()
-            .rev()
-            .map(|s| Signed {
-                public_key: s.public_key.clone(),
-                signature: s.signature.clone(),
-                message: s.message.clone(),
-            })
-            .collect();
+        let mut reversed = signed.clone();
+        reversed.reverse();
         assert_ne!(weights(&reversed), baseline);
     }
 }
