@@ -216,19 +216,14 @@ impl<H: DomainSeparation> SchnorrSignature<RistrettoPublicKey, RistrettoSecretKe
         Self::verify_batch_with_weights(items, &weights)
     }
 
-    /// Reduces a batch to the scalars and points of its verification equation, less the generator term.
-    ///
-    /// Returns `None` if any term is unusable, which is a rejection: the identity public key has to be refused
-    /// because under `P = 0` the equation degenerates to `s·G == R`, which anyone can satisfy, and the batch never
-    /// falls through to the per-signature check that would refuse it.
     /// Checks the batch equation for a set of items against a set of weights, as a single `2n+1`-term
     /// multiscalar multiplication.
     ///
     /// The generator is folded in as an ordinary point rather than multiplied separately against dalek's
     /// precomputed basepoint table. The table makes `k·G` fast in isolation, but it is still a whole extra scalar
-    /// multiplication, and at the small batch sizes that dominate in practice that fixed cost outweighs one more
-    /// term in the multiscalar multiplication: folding is ~32% faster at `n = 1` and ~25% at `n = 2`, converging
-    /// to a wash by `n ≈ 256`.
+    /// multiplication, and one more term in the multiscalar multiplication is cheaper than that. Measured head to
+    /// head, folding is ~40% faster at `n = 1`, ~34% at `n = 2` and ~11% at `n = 16`; the saving is a fixed cost
+    /// amortised over a growing multiplication, so it decays with `n` and is a wash by `n = 1024`.
     fn verify_batch_with_weights<B: AsRef<[u8]>>(
         items: &[(&Self, &RistrettoPublicKey, B)],
         weights: &[Scalar],

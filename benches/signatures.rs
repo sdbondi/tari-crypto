@@ -82,6 +82,10 @@ fn signed_batch(n: usize) -> Vec<(RistrettoSchnorr, RistrettoPublicKey, [u8; 32]
 
 /// Per-signature verification against batch verification over the same set.
 ///
+/// The batch is signed once, outside the measurement, and every iteration verifies that same fixed input. Signing
+/// fresh signatures per iteration would swamp a difference of tens of microseconds in setup noise. Verification is
+/// stateless, so reuse changes nothing but the variance.
+///
 /// `n = 1` and `n = 2` matter as much as the large sizes: most Ootle transactions carry a single seal plus a
 /// single authorization, so the batch must not lose there.
 fn verify_batch(c: &mut Criterion) {
@@ -89,38 +93,23 @@ fn verify_batch(c: &mut Criterion) {
     for n in [1usize, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
         group.throughput(Throughput::Elements(n as u64));
 
-        group.bench_with_input(BenchmarkId::new("individually", n), &n, |b, &n| {
-            b.iter_batched(
-                || signed_batch(n),
-                |batch| {
-                    for (s, p, m) in &batch {
-                        assert!(s.verify(p, m));
-                    }
-                },
-                BatchSize::SmallInput,
-            );
+        let batch = signed_batch(n);
+        let items: Vec<_> = batch.iter().map(|(s, p, m)| (s, p, m.as_slice())).collect();
+
+        group.bench_with_input(BenchmarkId::new("individually", n), &n, |b, _| {
+            b.iter(|| {
+                for (s, p, m) in &batch {
+                    assert!(s.verify(p, m));
+                }
+            });
         });
 
-        group.bench_with_input(BenchmarkId::new("deterministic weights", n), &n, |b, &n| {
-            b.iter_batched(
-                || signed_batch(n),
-                |batch| {
-                    let items: Vec<_> = batch.iter().map(|(s, p, m)| (s, p, m.as_slice())).collect();
-                    assert!(RistrettoSchnorr::verify_batch(&items));
-                },
-                BatchSize::SmallInput,
-            );
+        group.bench_with_input(BenchmarkId::new("deterministic weights", n), &n, |b, _| {
+            b.iter(|| assert!(RistrettoSchnorr::verify_batch(&items)));
         });
 
-        group.bench_with_input(BenchmarkId::new("random weights", n), &n, |b, &n| {
-            b.iter_batched(
-                || signed_batch(n),
-                |batch| {
-                    let items: Vec<_> = batch.iter().map(|(s, p, m)| (s, p, m.as_slice())).collect();
-                    assert!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng()));
-                },
-                BatchSize::SmallInput,
-            );
+        group.bench_with_input(BenchmarkId::new("random weights", n), &n, |b, _| {
+            b.iter(|| assert!(RistrettoSchnorr::verify_batch_with_rng(&items, &mut rng())));
         });
     }
     group.finish();
