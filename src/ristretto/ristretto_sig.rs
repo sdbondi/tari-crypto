@@ -221,9 +221,11 @@ impl<H: DomainSeparation> SchnorrSignature<RistrettoPublicKey, RistrettoSecretKe
     ///
     /// The generator is folded in as an ordinary point rather than multiplied separately against dalek's
     /// precomputed basepoint table. The table makes `k·G` fast in isolation, but it is still a whole extra scalar
-    /// multiplication, and one more term in the multiscalar multiplication is cheaper than that. Measured head to
-    /// head, folding is ~40% faster at `n = 1`, ~34% at `n = 2` and ~11% at `n = 16`; the saving is a fixed cost
-    /// amortised over a growing multiplication, so it decays with `n` and is a wash by `n = 1024`.
+    /// multiplication. Measured against a split form that does use the table, folding is ~16% faster at `n = 1`
+    /// and 3-7% faster from `n = 2` to `n = 8`, a wash from `n = 16` to `n = 256`, and ~8% slower at `n = 1024`.
+    /// The table is worth a flat ~13 µs on the generator term, so folding only pays while that constant is large
+    /// relative to the multiplication it is folded into; this is tuned for the small batches that dominate in
+    /// practice.
     fn verify_batch_with_weights<B: AsRef<[u8]>>(
         items: &[(&Self, &RistrettoPublicKey, B)],
         weights: &[Scalar],
