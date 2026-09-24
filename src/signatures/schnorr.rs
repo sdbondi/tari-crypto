@@ -193,9 +193,10 @@ where
         for<'b> &'b P: Add<P, Output = P>,
         B: AsRef<[u8]>,
     {
-        let challenge =
-            Self::construct_domain_separated_challenge::<_, Blake2b<U64>>(&self.public_nonce, public_key, message);
-        self.verify_raw_uniform(public_key, challenge.as_ref())
+        let Ok(e) = self.challenge_scalar(public_key, message) else {
+            return false;
+        };
+        self.verify_challenge_scalar(public_key, &e)
     }
 
     /// Verifies a signature against a given public key and challenge byte slice.
@@ -241,6 +242,20 @@ where
         let rhs = &self.public_nonce + challenge * public_key;
         // Implementors should make this a constant time comparison
         lhs == rhs
+    }
+
+    /// Returns the challenge scalar `e = H(R, P, m)` that [`SchnorrSignature::verify`] checks this signature
+    /// against.
+    ///
+    /// This is exactly the derivation used by [`SchnorrSignature::sign`] and [`SchnorrSignature::verify`]: the
+    /// domain separated Blake2b-512 challenge of [`SchnorrSignature::construct_domain_separated_challenge`],
+    /// wide-reduced into a scalar. It is exposed so that callers building their own verification equations do not
+    /// have to reproduce it.
+    pub fn challenge_scalar<B>(&self, public_key: &P, message: B) -> Result<K, SchnorrSignatureError>
+    where B: AsRef<[u8]> {
+        let challenge =
+            Self::construct_domain_separated_challenge::<_, Blake2b<U64>>(&self.public_nonce, public_key, message);
+        K::from_uniform_bytes(challenge.as_ref()).map_err(|_| SchnorrSignatureError::InvalidChallenge)
     }
 
     /// Returns a reference to the `s` signature component.
