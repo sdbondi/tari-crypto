@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file. See [standa
 ### Features
 
 * vartime batch Schnorr verification ([#249](https://github.com/tari-project/tari-crypto/issues/249))
+* adds secret key conversions and `RistrettoSecretKey::ZERO` ([#247](https://github.com/tari-project/tari-crypto/issues/247))
 
 ### [0.23.3](https://github.com/tari-project/tari-crypto/compare/v0.23.2...v0.23.3) (2026-09-07)
 
